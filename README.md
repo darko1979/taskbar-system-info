@@ -1,6 +1,6 @@
 # Taskbar System Info
 
-**Version 1.0** · Windows 10 / 11 · portable x64 · single ~300 KB exe, no installer, no runtime
+**Version 1.1** · Windows 10 / 11 · portable x64 · single ~300 KB exe, no installer, no runtime
 
 A tiny native app that shows live system information directly in the Windows taskbar, the same way the Weather widget does:
 CPU, GPU, RAM, VRAM and network bandwidth, each with its current value and a history graph.
@@ -185,7 +185,7 @@ res/version.h    app version (exe resources and update check)
 
 ## Changelog
 
-### Unreleased
+### 1.1.0 (2026-11-13)
 * Manual and automatic (daily) update check against GitHub releases, with a tray notification and a download menu item.
 
 ### 1.0 (2026-11-13)
