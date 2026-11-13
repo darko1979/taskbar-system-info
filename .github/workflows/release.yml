@@ -1,5 +1,5 @@
 # Builds the portable Windows x64 exe when a version tag (v*) is pushed,
-# and attaches it to a draft GitHub release for review before publishing.
+# and publishes it as a GitHub release.
 # Can also be started by hand (Actions > Release > Run workflow) for an existing tag.
 name: Release
 
@@ -90,5 +90,5 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:TAG $env:ZIP --clobber
           } else {
-            gh release create $env:TAG $env:ZIP --verify-tag --draft --title "Taskbar System Info $($env:TAG)" --notes-file notes.md
+            gh release create $env:TAG $env:ZIP --verify-tag --latest --title "Taskbar System Info $($env:TAG)" --notes-file notes.md
           }

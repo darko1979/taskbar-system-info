@@ -1,6 +1,6 @@
 # Taskbar System Info
 
-**Version 1.1** · Windows 10 / 11 · portable x64 · single ~300 KB exe, no installer, no runtime
+**Version 1.1.1** · Windows 10 / 11 · portable x64 · single ~300 KB exe, no installer, no runtime
 
 A tiny native app that shows live system information directly in the Windows taskbar, the same way the Weather widget does:
 CPU, GPU, RAM, VRAM and network bandwidth, each with its current value and a history graph.
@@ -33,7 +33,7 @@ If you used *Start with Windows*, turn that off first.
 | Network | upload / download rate        | download (filled) + upload (line), auto-scaled |
 
 Each item can be configured on its own:
-* **Show or hide** the item.
+* **Show or hide** the item. Clicking the item's name (*CPU*, *GPU*, …) in the menu toggles it directly.
 * **History graph**: on or off.
 * **History length**: 30 s to 1 h.
 * **Graph width**: 24 to 100 px, or the default width.
@@ -158,8 +158,8 @@ Releases are built by GitHub Actions (`.github/workflows/release.yml`). The work
    * checks that the tag matches `res\version.h`; the update checker relies on this
    * builds with MSVC on `windows-latest`
    * packages `TaskbarSysInfo_<version>_x64_portable.zip` with the exe and README
-   * attaches the zip, with its SHA-256, to a **draft** release
-4. Review the draft on the Releases page and click **Publish**. Running apps see it at their next update check.
+   * publishes a GitHub release with the zip and its SHA-256
+4. Running apps see the new release at their next update check.
 
 An existing tag can be rebuilt with **Actions → Release → Run workflow**.
 
@@ -184,6 +184,9 @@ res/version.h    app version (exe resources and update check)
 * **Windows 10 second-monitor taskbars** are supported in code but have not been tested yet.
 
 ## Changelog
+
+### 1.1.1 (2026-11-13)
+* Clicking an item name (CPU, GPU, RAM, VRAM, Network) in the menu toggles that item on or off.
 
 ### 1.1.0 (2026-11-13)
 * Manual and automatic (daily) update check against GitHub releases, with a tray notification and a download menu item.

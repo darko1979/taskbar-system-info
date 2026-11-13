@@ -261,6 +261,35 @@ void ApplyCommand(UINT id, const std::vector<GpuInfo>& gpus, const std::vector<N
     Widget_Update();
 }
 
+// Clicking (left or right) a metric's own item ("CPU", "GPU", ...) toggles its "Show" setting,
+// instead of only opening the submenu. Menus don't report clicks on submenu items, so a
+// message-filter hook watches mouse-up events inside the menu's modal loop.
+HMENU s_menuTop = nullptr;
+HMENU s_metricSub[M_COUNT] = {};
+int s_menuToggle = -1;
+
+LRESULT CALLBACK MenuFilterProc(int code, WPARAM wp, LPARAM lp) {
+    const MSG* msg = reinterpret_cast<const MSG*>(lp);
+    if (code == MSGF_MENU && msg && (msg->message == WM_LBUTTONUP || msg->message == WM_RBUTTONUP)) {
+        POINT pt = msg->pt;
+        HWND w = WindowFromPoint(pt);
+        wchar_t cls[16] = {};
+        if (w && GetClassNameW(w, cls, ARRAYSIZE(cls)) && wcscmp(cls, L"#32768") == 0 &&
+            (HMENU)SendMessageW(w, MN_GETHMENU, 0, 0) == s_menuTop) {
+            int pos = MenuItemFromPoint(nullptr, s_menuTop, pt);
+            HMENU sub = pos >= 0 ? GetSubMenu(s_menuTop, pos) : nullptr;
+            for (int i = 0; sub && i < M_COUNT; ++i) {
+                if (s_metricSub[i] == sub) {
+                    s_menuToggle = i;
+                    EndMenu();
+                    return 1;  // swallow the click
+                }
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
 void ShowMenu() {
     Config c;
     AcquireSRWLockShared(&g_shared.lock);
@@ -321,6 +350,7 @@ void ShowMenu() {
             AppendSub(sub, un, L"Units");
         }
         AppendSub(menu, sub, kMetricName[i], m.show);
+        s_metricSub[i] = sub;
     }
     Sep(menu);
 
@@ -375,9 +405,15 @@ void ShowMenu() {
     POINT pt;
     GetCursorPos(&pt);
     SetForegroundWindow(s_main);
+    s_menuTop = menu;
+    s_menuToggle = -1;
+    HHOOK hook = SetWindowsHookExW(WH_MSGFILTER, MenuFilterProc, nullptr, GetCurrentThreadId());
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, s_main, nullptr);
+    if (hook) UnhookWindowsHookEx(hook);
     PostMessageW(s_main, WM_NULL, 0, 0);
     DestroyMenu(menu);
+    s_menuTop = nullptr;
+    if (cmd == 0 && s_menuToggle >= 0) cmd = ID_METRIC + s_menuToggle * 100 + SUB_SHOW;
     ApplyCommand(cmd, gpus, nets);
 }
 
