@@ -25,7 +25,7 @@ cl /nologo /std:c++17 /O1 /GL /GS /MT /W4 /EHsc /GR- /permissive- /utf-8 ^
    /Fobuild\ src\*.cpp build\app.res ^
    /Fe:bin\TaskbarSysInfo.exe ^
    /link /LTCG /SUBSYSTEM:WINDOWS /MANIFEST:NO /OPT:REF /OPT:ICF ^
-   user32.lib gdi32.lib gdiplus.lib shell32.lib advapi32.lib pdh.lib iphlpapi.lib dxgi.lib ole32.lib oleaut32.lib dwmapi.lib winhttp.lib || exit /b 1
+   user32.lib gdi32.lib gdiplus.lib shell32.lib advapi32.lib pdh.lib iphlpapi.lib dxgi.lib ole32.lib oleaut32.lib dwmapi.lib winhttp.lib bcrypt.lib version.lib || exit /b 1
 
 echo.
 echo Built bin\TaskbarSysInfo.exe

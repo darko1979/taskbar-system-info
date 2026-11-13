@@ -1,6 +1,6 @@
 # Taskbar System Info
 
-**Version 1.1.1** · Windows 10 / 11 · portable x64 · single ~300 KB exe, no installer, no runtime
+**Version 1.1.2** · Windows 10 / 11 · portable x64 · single ~300 KB exe, no installer, no runtime
 
 A tiny native app that shows live system information directly in the Windows taskbar, the same way the Weather widget does:
 CPU, GPU, RAM, VRAM and network bandwidth, each with its current value and a history graph.
@@ -75,13 +75,21 @@ It closes on click-away or Esc. With *Click-through widget* enabled, use the tra
 
 The app can check this repository's [GitHub releases](https://github.com/darko1979/taskbar-system-info/releases) for a newer version:
 
-* **Check for updates now** (menu) shows the result in a dialog. If a newer version exists, it offers to open the download page.
+* **Check for updates now** (menu) shows the result in a dialog. If a newer version exists, it offers to install it.
 * **Check for updates automatically** (menu, on by default) checks 30 s after start and then once every 24 hours.
-  When a newer release appears you get one Windows notification for that version (click it to open the download page),
-  and a **Download update** item appears at the top of the menu.
+  When a newer release appears you get one Windows notification for that version (click it to install),
+  and **Install update … and restart** and **What's new in …** items appear at the top of the menu.
 
-The app never downloads or installs anything by itself. To update, exit the app and replace `TaskbarSysInfo.exe`.
-Your `TaskbarSysInfo.ini` is kept. The check is a single anonymous HTTPS request to `api.github.com`.
+**Installing an update** happens only when you confirm it:
+1. The release's portable zip is downloaded from GitHub.
+2. Its SHA-256 checksum is checked against the one GitHub publishes for the release.
+3. The zip is extracted with Windows' built-in `tar.exe`, and the new exe's version is checked.
+4. `TaskbarSysInfo.exe` is replaced, and the app restarts.
+
+Your `TaskbarSysInfo.ini` is kept. If anything fails, nothing is changed, and the app offers to open the download page instead.
+The app's folder must be writable; for example, a folder under `Program Files` without administrator rights won't work.
+To update by hand, exit the app and replace `TaskbarSysInfo.exe`.
+The update check is a single anonymous HTTPS request to `api.github.com`.
 
 ## Configuration file
 
@@ -184,6 +192,10 @@ res/version.h    app version (exe resources and update check)
 * **Windows 10 second-monitor taskbars** are supported in code but have not been tested yet.
 
 ## Changelog
+
+### 1.1.2 (2026-11-13)
+* Self-update: the app downloads the new release, verifies its SHA-256, replaces the exe and restarts (after you confirm).
+  Updating from 1.1.1 or older still has to be done by hand once.
 
 ### 1.1.1 (2026-11-13)
 * Clicking an item name (CPU, GPU, RAM, VRAM, Network) in the menu toggles that item on or off.

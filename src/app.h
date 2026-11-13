@@ -19,6 +19,7 @@ constexpr UINT WM_APP_DATA = WM_APP + 1;  // worker -> UI: new sample available
 constexpr UINT WM_APP_TRAY = WM_APP + 2;  // tray icon callback
 constexpr UINT WM_APP_MENU = WM_APP + 3;  // widget right-click -> show menu
 constexpr UINT WM_APP_UPDATE = WM_APP + 4;  // update check finished: wParam = manual, lParam = UpdateResult*
+constexpr UINT WM_APP_INSTALLED = WM_APP + 5;  // self-update finished: lParam = UpdateResult*
 
 enum Metric { M_CPU, M_GPU, M_RAM, M_VRAM, M_NET, M_COUNT };
 enum Series { S_CPU, S_GPU, S_RAM, S_VRAM, S_DOWN, S_UP, S_COUNT };
@@ -189,7 +190,12 @@ struct UpdateResult {
     bool noReleases = false;     // repository has no published release yet
     bool newer = false;          // latest release is newer than this build
     std::wstring tag, url, error;
+    std::wstring assetUrl, sha256;  // portable zip of the release and its checksum (empty if not found)
 };
 const wchar_t* AppVersion();
 void Update_CheckAsync(HWND notify, bool manual);  // posts WM_APP_UPDATE when done
 bool Update_InProgress();
+// Downloads, verifies and swaps in the new exe; posts WM_APP_INSTALLED (lParam = UpdateResult*, ok/error/tag).
+void Update_InstallAsync(HWND notify, const std::wstring& tag, const std::wstring& assetUrl, const std::wstring& sha256);
+bool Update_Installing();
+void Update_CleanupOld();  // deletes TaskbarSysInfo.exe.old left by a previous update

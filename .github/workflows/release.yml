@@ -79,7 +79,7 @@ jobs:
 
           **Download:** ``$($env:ZIP)``. Unzip anywhere and run ``TaskbarSysInfo.exe``. Settings are stored in ``TaskbarSysInfo.ini`` next to the exe.
 
-          To update from an earlier version: exit the app and replace ``TaskbarSysInfo.exe``. Your settings are kept.
+          To update from 1.1.2 or newer: use **Install update** in the app menu. From older versions: exit the app and replace ``TaskbarSysInfo.exe``. Your settings are kept.
 
           Requires Windows 10 (1709+) or Windows 11, x64. The exe is not code-signed, so Windows SmartScreen may warn on first launch.
 

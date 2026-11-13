@@ -38,7 +38,7 @@ enum : UINT {
     ID_TASKBARS = 2700, ID_INTERVAL = 2200, ID_POS = 2300, ID_GW = 2400, ID_FONT = 2500, ID_BG = 2600,
     ID_AUTOSTART = 2900, ID_EDITCFG, ID_RELOAD, ID_TASKMGR, ID_EXIT,
     ID_CLICKTHROUGH = 2910,
-    ID_UPDATE_CHECK = 2920, ID_UPDATE_AUTO, ID_UPDATE_DOWNLOAD,
+    ID_UPDATE_CHECK = 2920, ID_UPDATE_AUTO, ID_UPDATE_DOWNLOAD, ID_UPDATE_PAGE,
 };
 
 // Update checks: first one shortly after start, then the timer re-checks hourly whether a day has passed.
@@ -46,7 +46,10 @@ constexpr UINT_PTR kUpdateTimer = 1;
 constexpr UINT kUpdateFirstDelayMs = 30 * 1000;
 constexpr UINT kUpdateTimerMs = 60 * 60 * 1000;
 constexpr long long kUpdateEverySec = 24 * 60 * 60;
-std::wstring s_updateTag, s_updateUrl;  // set when a newer release was found
+std::wstring s_updateTag, s_updateUrl;  // set when a newer release was found (url = release page)
+std::wstring s_updateAsset, s_updateSha;  // its portable zip and SHA-256, for the self-update
+std::wstring s_updatedFrom;  // set at start-up after a self-update (previous version)
+HANDLE s_mutex = nullptr;    // single-instance mutex
 
 // ---------------------------------------------------------------- sampling thread
 DWORD WINAPI WorkerProc(void*) {
@@ -193,6 +196,69 @@ std::wstring HistoryLabel(int sec) {
     return L"1 hour";
 }
 
+// ---------------------------------------------------------------- self-update
+void ShowBalloon(const std::wstring& title, const std::wstring& text);
+void Cleanup();
+
+void OpenReleasePage() {
+    if (!s_updateUrl.empty()) ShellExecuteW(nullptr, L"open", s_updateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// Downloads and installs s_updateTag, then restarts. Falls back to the release page if the release
+// has no verifiable portable zip.
+void StartInstall(bool confirm) {
+    if (s_updateTag.empty() || Update_Installing()) return;
+    const UINT mb = MB_SETFOREGROUND | MB_TOPMOST;
+    if (s_updateAsset.empty() || s_updateSha.empty()) {
+        if (MessageBoxW(s_main, (L"Version " + s_updateTag + L" cannot be installed automatically.\n\nOpen the download page?").c_str(),
+                        APP_TITLE, mb | MB_ICONINFORMATION | MB_YESNO) == IDYES)
+            OpenReleasePage();
+        return;
+    }
+    if (confirm) {
+        const std::wstring t = L"A new version is available: " + s_updateTag + L"\nYou are running version " +
+                               AppVersion() +
+                               L".\n\nInstall it now? The update is downloaded from GitHub, verified, and the app "
+                               L"restarts. Your settings are kept.\n\nChoose Cancel to open the release page instead.";
+        const int r = MessageBoxW(s_main, t.c_str(), APP_TITLE, mb | MB_ICONINFORMATION | MB_YESNOCANCEL);
+        if (r == IDCANCEL) OpenReleasePage();
+        if (r != IDYES) return;
+    }
+    Update_InstallAsync(s_main, s_updateTag, s_updateAsset, s_updateSha);
+    ShowBalloon(L"Updating to " + s_updateTag, L"Downloading the update. The app restarts when it is installed.");
+}
+
+void OnInstalled(UpdateResult* res) {
+    std::unique_ptr<UpdateResult> r(res);
+    const UINT mb = MB_SETFOREGROUND | MB_TOPMOST;
+    if (!r->ok) {
+        if (MessageBoxW(s_main, (L"The update to " + r->tag + L" failed.\n\n" + r->error + L"\n\nOpen the download page?").c_str(),
+                        APP_TITLE, mb | MB_ICONWARNING | MB_YESNO) == IDYES)
+            OpenReleasePage();
+        return;
+    }
+    // The new exe is in place: remove our widgets and tray icon, release the single-instance mutex,
+    // start the new exe (it also waits for this process to exit) and quit.
+    Cleanup();
+    if (s_mutex) {
+        CloseHandle(s_mutex);
+        s_mutex = nullptr;
+    }
+    wchar_t exe[MAX_PATH * 4];
+    GetModuleFileNameW(nullptr, exe, ARRAYSIZE(exe));
+    std::wstring cmd = L"\"" + std::wstring(exe) + L"\" /updated " + std::to_wstring(GetCurrentProcessId()) + L" " + AppVersion();
+    STARTUPINFOW si{ sizeof(si) };
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(exe, &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+        MessageBoxW(s_main, (L"Version " + r->tag + L" was installed, but the app could not be restarted.\n\nPlease start "
+                             L"TaskbarSysInfo.exe again.").c_str(), APP_TITLE, mb | MB_ICONWARNING);
+    } else {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    DestroyWindow(s_main);
+}
+
 void ApplyCommand(UINT id, const std::vector<GpuInfo>& gpus, const std::vector<NetIfInfo>& nets) {
     switch (id) {
     case 0: return;
@@ -208,7 +274,10 @@ void ApplyCommand(UINT id, const std::vector<GpuInfo>& gpus, const std::vector<N
         Update_CheckAsync(s_main, true);
         return;
     case ID_UPDATE_DOWNLOAD:
-        if (!s_updateUrl.empty()) ShellExecuteW(nullptr, L"open", s_updateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        StartInstall(false);
+        return;
+    case ID_UPDATE_PAGE:
+        OpenReleasePage();
         return;
     }
 
@@ -300,8 +369,13 @@ void ShowMenu() {
 
     HMENU menu = CreatePopupMenu();
     if (!s_updateTag.empty()) {
-        Append(menu, ID_UPDATE_DOWNLOAD, L"\x2B07  Download update " + s_updateTag + L"...");
-        SetMenuDefaultItem(menu, ID_UPDATE_DOWNLOAD, FALSE);  // bold
+        if (Update_Installing()) {
+            Append(menu, 0, L"\x2B07  Downloading update " + s_updateTag + L"...", false, false, false);
+        } else {
+            Append(menu, ID_UPDATE_DOWNLOAD, L"\x2B07  Install update " + s_updateTag + L" and restart");
+            SetMenuDefaultItem(menu, ID_UPDATE_DOWNLOAD, FALSE);  // bold
+        }
+        Append(menu, ID_UPDATE_PAGE, L"What's new in " + s_updateTag + L"...");
         Sep(menu);
     }
     for (int i = 0; i < M_COUNT; ++i) {
@@ -441,9 +515,13 @@ void OnUpdateResult(bool manual, UpdateResult* res) {
     if (r->newer) {
         s_updateTag = r->tag;
         s_updateUrl = r->url;
+        s_updateAsset = r->assetUrl;
+        s_updateSha = r->sha256;
     } else if (r->ok) {
         s_updateTag.clear();
         s_updateUrl.clear();
+        s_updateAsset.clear();
+        s_updateSha.clear();
     }
 
     // remember the check (and which version we announced) in the INI
@@ -464,7 +542,7 @@ void OnUpdateResult(bool manual, UpdateResult* res) {
     if (!manual) {  // automatic: stay quiet unless there is something new (once per version)
         if (notify)
             ShowBalloon(L"Update available: " + r->tag,
-                        L"Taskbar System Info " + r->tag + L" is available (you have " + cur + L"). Click to open the download page.");
+                        L"Taskbar System Info " + r->tag + L" is available (you have " + cur + L"). Click to install it.");
         return;
     }
     const UINT mb = MB_SETFOREGROUND | MB_TOPMOST;
@@ -474,10 +552,7 @@ void OnUpdateResult(bool manual, UpdateResult* res) {
         MessageBoxW(s_main, (L"No releases have been published yet.\n\nYou are running version " + cur + L".").c_str(),
                     APP_TITLE, mb | MB_ICONINFORMATION);
     } else if (r->newer) {
-        std::wstring t = L"A new version is available: " + r->tag + L"\nYou are running version " + cur +
-                         L".\n\nOpen the download page?";
-        if (MessageBoxW(s_main, t.c_str(), APP_TITLE, mb | MB_ICONINFORMATION | MB_YESNO) == IDYES)
-            ShellExecuteW(nullptr, L"open", r->url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        StartInstall(true);
     } else {
         MessageBoxW(s_main, (L"You are running the latest version (" + cur + L").").c_str(), APP_TITLE,
                     mb | MB_ICONINFORMATION);
@@ -523,9 +598,12 @@ LRESULT CALLBACK MainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         case NIN_BALLOONUSERCLICK:  // "update available" notification clicked
-            if (!s_updateUrl.empty()) ShellExecuteW(nullptr, L"open", s_updateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            StartInstall(true);
             break;
         }
+        return 0;
+    case WM_APP_INSTALLED:
+        OnInstalled(reinterpret_cast<UpdateResult*>(lp));
         return 0;
     case WM_APP_MENU:
         ShowMenu();
@@ -584,7 +662,21 @@ void ApplyHistoryCapacities() {
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
-    HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\TaskbarSysInfo.SingleInstance");
+    // "/updated <pid> <old version>": started by a self-update; wait for the old instance to exit first.
+    int argc = 0;
+    if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
+        if (argc >= 3 && _wcsicmp(argv[1], L"/updated") == 0) {
+            if (HANDLE old = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)wcstoul(argv[2], nullptr, 10))) {
+                WaitForSingleObject(old, 15000);
+                CloseHandle(old);
+            }
+            s_updatedFrom = argc >= 4 ? argv[3] : L"?";
+        }
+        LocalFree(argv);
+    }
+    Update_CleanupOld();
+
+    s_mutex = CreateMutexW(nullptr, TRUE, L"Local\\TaskbarSysInfo.SingleInstance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
 
     s_inst = inst;
@@ -619,6 +711,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     s_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     s_worker = CreateThread(nullptr, 0, WorkerProc, nullptr, 0, nullptr);
     SetTimer(s_main, kUpdateTimer, kUpdateFirstDelayMs, nullptr);
+    if (!s_updatedFrom.empty())
+        ShowBalloon(L"Updated to " + std::wstring(AppVersion()),
+                    L"Taskbar System Info was updated from " + s_updatedFrom + L" to " + AppVersion() + L".");
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
@@ -629,6 +724,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     Cleanup();
     Gdiplus::GdiplusShutdown(gdipToken);
     CloseHandle(s_stopEvent);
-    if (mutex) CloseHandle(mutex);
+    if (s_mutex) CloseHandle(s_mutex);
     return 0;
 }
