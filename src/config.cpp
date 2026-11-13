@@ -72,6 +72,9 @@ void LoadConfig(Config& c) {
     c.textColor = ParseColor(tc, RGB(255, 255, 255));
     c.bgAlpha = std::clamp(GetInt(G, L"BackgroundAlpha", 0, p), 0, 255);
     c.clickThrough = GetInt(G, L"ClickThrough", 0, p) != 0;
+    c.autoUpdate = GetInt(L"Update", L"AutoCheck", 1, p) != 0;
+    c.lastUpdateCheck = _wtoi64(GetStr(L"Update", L"LastCheck", L"0", p).c_str());
+    c.updateNotified = GetStr(L"Update", L"Notified", L"", p);
     c.bgColor = ParseColor(GetStr(G, L"BackgroundColor", L"202020", p), RGB(32, 32, 32));
 
     for (int i = 0; i < M_COUNT; ++i) {
@@ -127,6 +130,9 @@ void SaveConfig(const Config& c) {
     put(G, L"TextColor", c.textAuto ? L"auto" : ColorStr(c.textColor));
     puti(G, L"BackgroundAlpha", c.bgAlpha);
     puti(G, L"ClickThrough", c.clickThrough);
+    puti(L"Update", L"AutoCheck", c.autoUpdate);
+    put(L"Update", L"LastCheck", std::to_wstring(c.lastUpdateCheck));
+    put(L"Update", L"Notified", c.updateNotified);
     put(G, L"BackgroundColor", ColorStr(c.bgColor));
     for (int i = 0; i < M_COUNT; ++i) {
         const MetricCfg& m = c.m[i];

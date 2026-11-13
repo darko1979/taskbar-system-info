@@ -1,0 +1,94 @@
+# Builds the portable Windows x64 exe when a version tag (v*) is pushed,
+# and attaches it to a draft GitHub release for review before publishing.
+# Can also be started by hand (Actions > Release > Run workflow) for an existing tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and release (e.g. v1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      # The update checker compares the release tag with res/version.h, so they must agree.
+      - name: Check version matches tag
+        shell: pwsh
+        run: |
+          $tagVer = $env:TAG.TrimStart('v')
+          function Norm([string]$v) {
+            $p = @($v.Split('.') | ForEach-Object { [int]$_ })
+            while ($p.Count -lt 3) { $p += 0 }
+            return ($p[0..2] -join '.')
+          }
+          if (Test-Path res/version.h) {
+            $code = (Select-String -Path res/version.h -Pattern '#define VER_STR\s+"([^"]+)"').Matches[0].Groups[1].Value
+            if ((Norm $tagVer) -ne (Norm $code)) {
+              Write-Error "Tag $env:TAG does not match res/version.h ($code). Bump the version or fix the tag."
+              exit 1
+            }
+          }
+          "VERSION=$tagVer" >> $env:GITHUB_ENV
+
+      # build.bat locates Visual Studio (preinstalled on the runner) via vswhere.
+      - name: Build
+        shell: cmd
+        run: call build.bat
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $exe = 'bin/TaskbarSysInfo.exe'
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          if ([BitConverter]::ToUInt16($bytes, $pe + 4) -ne 0x8664) { Write-Error 'exe is not x64'; exit 1 }
+          New-Item -ItemType Directory -Force pkg/TaskbarSysInfo | Out-Null
+          Copy-Item $exe, README.md pkg/TaskbarSysInfo/
+          $zip = "TaskbarSysInfo_$($env:VERSION)_x64_portable.zip"
+          Compress-Archive -Path pkg/TaskbarSysInfo -DestinationPath $zip -Force
+          "ZIP=$zip" >> $env:GITHUB_ENV
+          "SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash)" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP }}
+          path: ${{ env.ZIP }}
+
+      - name: Create or update draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = @"
+          Portable Windows x64 build. There is no installer and nothing else to install.
+
+          **Download:** ``$($env:ZIP)``. Unzip anywhere and run ``TaskbarSysInfo.exe``. Settings are stored in ``TaskbarSysInfo.ini`` next to the exe.
+
+          To update from an earlier version: exit the app and replace ``TaskbarSysInfo.exe``. Your settings are kept.
+
+          Requires Windows 10 (1709+) or Windows 11, x64. The exe is not code-signed, so Windows SmartScreen may warn on first launch.
+
+          SHA-256: ``$($env:SHA256)``
+          "@
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $env:ZIP --clobber
+          } else {
+            gh release create $env:TAG $env:ZIP --verify-tag --draft --title "Taskbar System Info $($env:TAG)" --notes-file notes.md
+          }

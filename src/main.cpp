@@ -4,6 +4,8 @@
 #include <objbase.h>
 #include <objidl.h>
 #include <gdiplus.h>
+#include <ctime>
+#include <memory>
 #include "../res/resource.h"
 
 Shared g_shared;
@@ -36,7 +38,15 @@ enum : UINT {
     ID_TASKBARS = 2700, ID_INTERVAL = 2200, ID_POS = 2300, ID_GW = 2400, ID_FONT = 2500, ID_BG = 2600,
     ID_AUTOSTART = 2900, ID_EDITCFG, ID_RELOAD, ID_TASKMGR, ID_EXIT,
     ID_CLICKTHROUGH = 2910,
+    ID_UPDATE_CHECK = 2920, ID_UPDATE_AUTO, ID_UPDATE_DOWNLOAD,
 };
+
+// Update checks: first one shortly after start, then the timer re-checks hourly whether a day has passed.
+constexpr UINT_PTR kUpdateTimer = 1;
+constexpr UINT kUpdateFirstDelayMs = 30 * 1000;
+constexpr UINT kUpdateTimerMs = 60 * 60 * 1000;
+constexpr long long kUpdateEverySec = 24 * 60 * 60;
+std::wstring s_updateTag, s_updateUrl;  // set when a newer release was found
 
 // ---------------------------------------------------------------- sampling thread
 DWORD WINAPI WorkerProc(void*) {
@@ -194,6 +204,12 @@ void ApplyCommand(UINT id, const std::vector<GpuInfo>& gpus, const std::vector<N
         ShellExecuteW(nullptr, L"open", L"notepad.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
         return;
     }
+    case ID_UPDATE_CHECK:
+        Update_CheckAsync(s_main, true);
+        return;
+    case ID_UPDATE_DOWNLOAD:
+        if (!s_updateUrl.empty()) ShellExecuteW(nullptr, L"open", s_updateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
     }
 
     AcquireSRWLockExclusive(&g_shared.lock);
@@ -232,6 +248,9 @@ void ApplyCommand(UINT id, const std::vector<GpuInfo>& gpus, const std::vector<N
         c.bgAlpha = kBgOpts[id - ID_BG];
     } else if (id == ID_CLICKTHROUGH) {
         c.clickThrough = !c.clickThrough;
+    } else if (id == ID_UPDATE_AUTO) {
+        c.autoUpdate = !c.autoUpdate;
+        if (c.autoUpdate) SetTimer(s_main, kUpdateTimer, kUpdateFirstDelayMs, nullptr);  // check soon if overdue
     }
     ApplyHistoryCapacities();
     const Config copy = c;
@@ -251,6 +270,11 @@ void ShowMenu() {
     const std::vector<NetIfInfo> nets = EnumNetInterfaces();
 
     HMENU menu = CreatePopupMenu();
+    if (!s_updateTag.empty()) {
+        Append(menu, ID_UPDATE_DOWNLOAD, L"\x2B07  Download update " + s_updateTag + L"...");
+        SetMenuDefaultItem(menu, ID_UPDATE_DOWNLOAD, FALSE);  // bold
+        Sep(menu);
+    }
     for (int i = 0; i < M_COUNT; ++i) {
         const MetricCfg& m = c.m[i];
         const UINT base = ID_METRIC + i * 100;
@@ -341,6 +365,11 @@ void ShowMenu() {
     Append(menu, ID_EDITCFG, L"Edit configuration file...");
     Append(menu, ID_RELOAD, L"Reload configuration");
     Sep(menu);
+    Append(menu, ID_UPDATE_CHECK, Update_InProgress() ? L"Checking for updates..." : L"Check for updates now", false, false,
+           !Update_InProgress());
+    Append(menu, ID_UPDATE_AUTO, L"Check for updates automatically", c.autoUpdate);
+    Append(menu, 0, std::wstring(APP_TITLE L" ") + AppVersion(), false, false, false);
+    Sep(menu);
     Append(menu, ID_EXIT, L"Exit");
 
     POINT pt;
@@ -350,6 +379,73 @@ void ShowMenu() {
     PostMessageW(s_main, WM_NULL, 0, 0);
     DestroyMenu(menu);
     ApplyCommand(cmd, gpus, nets);
+}
+
+// ---------------------------------------------------------------- update check results
+void ShowBalloon(const std::wstring& title, const std::wstring& text) {
+    NOTIFYICONDATAW n = s_nid;
+    n.uFlags = NIF_INFO;
+    wcsncpy_s(n.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(n.szInfo, text.c_str(), _TRUNCATE);
+    n.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+    Shell_NotifyIconW(NIM_MODIFY, &n);
+}
+
+void MaybeAutoCheck() {
+    AcquireSRWLockShared(&g_shared.lock);
+    const bool on = g_shared.cfg.autoUpdate;
+    const long long last = g_shared.cfg.lastUpdateCheck;
+    ReleaseSRWLockShared(&g_shared.lock);
+    const long long now = _time64(nullptr);
+    if (on && (now - last >= kUpdateEverySec || last > now)) Update_CheckAsync(s_main, false);
+}
+
+void OnUpdateResult(bool manual, UpdateResult* res) {
+    std::unique_ptr<UpdateResult> r(res);
+    if (r->newer) {
+        s_updateTag = r->tag;
+        s_updateUrl = r->url;
+    } else if (r->ok) {
+        s_updateTag.clear();
+        s_updateUrl.clear();
+    }
+
+    // remember the check (and which version we announced) in the INI
+    bool notify = false;
+    if (r->ok) {
+        AcquireSRWLockExclusive(&g_shared.lock);
+        g_shared.cfg.lastUpdateCheck = _time64(nullptr);
+        if (!manual && r->newer && _wcsicmp(g_shared.cfg.updateNotified.c_str(), r->tag.c_str()) != 0) {
+            g_shared.cfg.updateNotified = r->tag;
+            notify = true;
+        }
+        const Config copy = g_shared.cfg;
+        ReleaseSRWLockExclusive(&g_shared.lock);
+        SaveConfig(copy);
+    }
+
+    const std::wstring cur = AppVersion();
+    if (!manual) {  // automatic: stay quiet unless there is something new (once per version)
+        if (notify)
+            ShowBalloon(L"Update available: " + r->tag,
+                        L"Taskbar System Info " + r->tag + L" is available (you have " + cur + L"). Click to open the download page.");
+        return;
+    }
+    const UINT mb = MB_SETFOREGROUND | MB_TOPMOST;
+    if (!r->ok) {
+        MessageBoxW(s_main, (L"Could not check for updates.\n\n" + r->error).c_str(), APP_TITLE, mb | MB_ICONWARNING);
+    } else if (r->noReleases) {
+        MessageBoxW(s_main, (L"No releases have been published yet.\n\nYou are running version " + cur + L".").c_str(),
+                    APP_TITLE, mb | MB_ICONINFORMATION);
+    } else if (r->newer) {
+        std::wstring t = L"A new version is available: " + r->tag + L"\nYou are running version " + cur +
+                         L".\n\nOpen the download page?";
+        if (MessageBoxW(s_main, t.c_str(), APP_TITLE, mb | MB_ICONINFORMATION | MB_YESNO) == IDYES)
+            ShellExecuteW(nullptr, L"open", r->url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    } else {
+        MessageBoxW(s_main, (L"You are running the latest version (" + cur + L").").c_str(), APP_TITLE,
+                    mb | MB_ICONINFORMATION);
+    }
 }
 
 // ---------------------------------------------------------------- lifetime
@@ -390,10 +486,25 @@ LRESULT CALLBACK MainProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             Flyout_Toggle(anchor, FindWindowW(L"Shell_TrayWnd", nullptr));
             break;
         }
+        case NIN_BALLOONUSERCLICK:  // "update available" notification clicked
+            if (!s_updateUrl.empty()) ShellExecuteW(nullptr, L"open", s_updateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            break;
         }
         return 0;
     case WM_APP_MENU:
         ShowMenu();
+        return 0;
+    case WM_APP_UPDATE:
+        OnUpdateResult(wp != 0, reinterpret_cast<UpdateResult*>(lp));
+        return 0;
+    case WM_TIMER:
+        if (wp == kUpdateTimer) {
+            SetTimer(h, kUpdateTimer, kUpdateTimerMs, nullptr);  // after the first shot: hourly
+            MaybeAutoCheck();
+        }
+        return 0;
+    case WM_COMMAND:  // menu commands can also be sent directly (e.g. for scripting/tests)
+        if (HIWORD(wp) == 0 && LOWORD(wp) >= ID_AUTOSTART) ApplyCommand(LOWORD(wp), {}, {});
         return 0;
     case WM_SETTINGCHANGE:
     case WM_DISPLAYCHANGE:
@@ -471,6 +582,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 
     s_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     s_worker = CreateThread(nullptr, 0, WorkerProc, nullptr, 0, nullptr);
+    SetTimer(s_main, kUpdateTimer, kUpdateFirstDelayMs, nullptr);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

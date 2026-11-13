@@ -18,6 +18,7 @@
 constexpr UINT WM_APP_DATA = WM_APP + 1;  // worker -> UI: new sample available
 constexpr UINT WM_APP_TRAY = WM_APP + 2;  // tray icon callback
 constexpr UINT WM_APP_MENU = WM_APP + 3;  // widget right-click -> show menu
+constexpr UINT WM_APP_UPDATE = WM_APP + 4;  // update check finished: wParam = manual, lParam = UpdateResult*
 
 enum Metric { M_CPU, M_GPU, M_RAM, M_VRAM, M_NET, M_COUNT };
 enum Series { S_CPU, S_GPU, S_RAM, S_VRAM, S_DOWN, S_UP, S_COUNT };
@@ -48,6 +49,9 @@ struct Config {
     COLORREF textColor = RGB(255, 255, 255);
     int bgAlpha = 0;             // 0 = fully transparent background
     bool clickThrough = false;   // widget ignores the mouse (taskbar icons below stay clickable)
+    bool autoUpdate = true;      // check GitHub releases once a day
+    long long lastUpdateCheck = 0;  // unix time of the last automatic check
+    std::wstring updateNotified; // newest version we already showed a notification for
     COLORREF bgColor = RGB(32, 32, 32);
     std::wstring netInterface;   // interface alias, empty = all physical adapters
     std::wstring gpuAdapter;     // adapter description, empty = auto (largest dedicated VRAM)
@@ -178,3 +182,14 @@ void Flyout_Toggle(const RECT& anchor, HWND taskbar);  // anchor = clicked widge
 void Flyout_Refresh();                                 // new sample arrived
 void Flyout_Hide();
 void Flyout_Shutdown();
+
+// ---------------------------------------------------------------- update check (GitHub releases)
+struct UpdateResult {
+    bool ok = false;             // request + parse succeeded
+    bool noReleases = false;     // repository has no published release yet
+    bool newer = false;          // latest release is newer than this build
+    std::wstring tag, url, error;
+};
+const wchar_t* AppVersion();
+void Update_CheckAsync(HWND notify, bool manual);  // posts WM_APP_UPDATE when done
+bool Update_InProgress();

@@ -17,7 +17,7 @@ Click the widget for a details panel; right-click it (or the tray icon) for sett
 
 ## Download
 
-Get **`TaskbarSysInfo-1.0-win-x64-portable.zip`** from the [Releases](https://github.com/darko1979/taskbar-system-info/releases/latest) page.
+Get **`TaskbarSysInfo_<version>_x64_portable.zip`** from the [Releases](https://github.com/darko1979/taskbar-system-info/releases/latest) page.
 Unzip it anywhere (USB stick, `Documents`, …) and run `TaskbarSysInfo.exe`.
 Settings are stored in `TaskbarSysInfo.ini` next to the exe. To remove the app, exit it and delete the folder.
 If you used *Start with Windows*, turn that off first.
@@ -48,6 +48,7 @@ General options:
 * **Click-through widget**: the widget ignores the mouse, so taskbar icons underneath it stay clickable.
 * **Start with Windows**: the path is kept current if you move the folder.
 * **Light/dark**: text color follows the taskbar theme. Scaling is per-monitor DPI aware.
+* **Update check**: manual, from the menu, or automatic once a day (see [Updates](#updates)).
 
 ### Mouse
 
@@ -69,6 +70,18 @@ The **details flyout** shows:
 * system uptime, plus **Task Manager** and **Settings** buttons
 
 It closes on click-away or Esc. With *Click-through widget* enabled, use the tray icon instead.
+
+## Updates
+
+The app can check this repository's [GitHub releases](https://github.com/darko1979/taskbar-system-info/releases) for a newer version:
+
+* **Check for updates now** (menu) shows the result in a dialog. If a newer version exists, it offers to open the download page.
+* **Check for updates automatically** (menu, on by default) checks 30 s after start and then once every 24 hours.
+  When a newer release appears you get one Windows notification for that version (click it to open the download page),
+  and a **Download update** item appears at the top of the menu.
+
+The app never downloads or installs anything by itself. To update, exit the app and replace `TaskbarSysInfo.exe`.
+Your `TaskbarSysInfo.ini` is kept. The check is a single anonymous HTTPS request to `api.github.com`.
 
 ## Configuration file
 
@@ -93,6 +106,10 @@ Interface=          ; empty = all physical adapters, otherwise the adapter name,
 Bits=0
 ColorDown=4DD0E1
 ColorUp=FF8A65
+[Update]
+AutoCheck=1         ; daily check of GitHub releases
+LastCheck=0         ; set by the app
+Notified=           ; last version a notification was shown for
 ```
 
 ## Resource use
@@ -127,6 +144,25 @@ build.bat
 
 The output is `bin\TaskbarSysInfo.exe`. `tools\make-icon.ps1` regenerates `res\app.ico`.
 
+### Making a release
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`). The workflow produces only the portable Windows x64 zip.
+
+1. Bump the version in `res\version.h` and add a changelog entry. Then commit and push.
+2. Tag the commit and push the tag:
+   ```
+   git tag v1.1.0
+   git push origin v1.1.0
+   ```
+3. The workflow then:
+   * checks that the tag matches `res\version.h`; the update checker relies on this
+   * builds with MSVC on `windows-latest`
+   * packages `TaskbarSysInfo_<version>_x64_portable.zip` with the exe and README
+   * attaches the zip, with its SHA-256, to a **draft** release
+4. Review the draft on the Releases page and click **Publish**. Running apps see it at their next update check.
+
+An existing tag can be rebuilt with **Actions → Release → Run workflow**.
+
 ```
 src/app.h        shared types: config, history ring buffer, samples
 src/main.cpp     entry point, tray icon, menu, sampling thread, autostart
@@ -135,6 +171,8 @@ src/widget.cpp   taskbar widget windows: embedding, layout, rendering, placement
 src/flyout.cpp   details flyout and top-process sampling
 src/probe.cpp    UI Automation probe for the Windows 11 taskbar
 src/config.cpp   INI load/save, formatting helpers
+src/update.cpp   update check against GitHub releases (WinHTTP)
+res/version.h    app version (exe resources and update check)
 ```
 
 ## Limitations
@@ -146,6 +184,9 @@ src/config.cpp   INI load/save, formatting helpers
 * **Windows 10 second-monitor taskbars** are supported in code but have not been tested yet.
 
 ## Changelog
+
+### Unreleased
+* Manual and automatic (daily) update check against GitHub releases, with a tray notification and a download menu item.
 
 ### 1.0 (2026-11-13)
 First release:
